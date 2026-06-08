@@ -6,11 +6,6 @@
  * ║  endpoint: GET /jobs                                             ║
  * ║                                                                  ║
  * ║  پارسر RSS: HTMLRewriter (پایدار، بدون Regex شکننده)           ║
- * ║                                                                  ║
- * ║  متغیرهای محیطی (در Cloudflare Dashboard تنظیم کن):            ║
- * ║    WORKER_SECRET — یه رشته تصادفی (مثلاً یه UUID)              ║
- * ║    همین مقدار رو در GitHub Secrets به عنوان CF_WORKER_SECRET    ║
- * ║    ذخیره کن.                                                     ║
  * ╚══════════════════════════════════════════════════════════════════╝
  */
 
@@ -18,14 +13,6 @@ export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
     const path = url.pathname;
-
-    // ── بررسی امنیتی ─────────────────────────────────────────────────────
-    if (env.WORKER_SECRET) {
-      const incoming = request.headers.get("X-Worker-Secret") || "";
-      if (incoming !== env.WORKER_SECRET) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-    }
 
     // ── healthcheck ──────────────────────────────────────────────────────
     if (path === "/" || path === "/health") {
