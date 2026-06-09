@@ -1,39 +1,3 @@
-"""
-SEO Job Scraper Bot v4.1
-========================
-منابع شغلی رایگان:
-  • Remotive.com
-  • Jobicy.com
-  • Arbeitnow
-  • Adzuna (رایگان با API key)
-  • Cloudflare Worker (Remote OK + We Work Remotely)
-
-منابع پولی (اختیاری):
-  • JSearch via RapidAPI  — پلن رایگان ۲۰۰ req/ماه
-
-قابلیت‌های AI (اختیاری):
-  • Gemini — تولید Cover Letter با دکمه زیر هر آگهی
-  • OpenAI (GPT) — جایگزین Gemini
-  • هر API سازگار OpenAI
-
-ذخیره‌سازی اختیاری:
-  • Google Sheets (Batch append)
-
-متغیرهای محیطی (GitHub Secrets):
-  TELEGRAM_BOT_TOKEN   — اجباری
-  TELEGRAM_CHAT_ID     — اجباری
-  RAPIDAPI_KEY         — اختیاری
-  GSHEET_CREDENTIALS   — اختیاری (JSON سرویس اکانت)
-  GSHEET_ID            — اختیاری
-  CF_WORKER_URL        — اختیاری
-  AI_PROVIDER          — اختیاری: gemini | openai | custom
-  AI_API_KEY           — اختیاری: کلید API هوش مصنوعی
-  AI_MODEL             — اختیاری: مدل (default: gemini-2.0-flash)
-  AI_BASE_URL          — اختیاری: آدرس پایه برای API سازگار OpenAI
-  ADZUNA_APP_ID        — اختیاری
-  ADZUNA_API_KEY       — اختیاری
-"""
-
 import html
 import json
 import logging
@@ -44,10 +8,8 @@ import traceback
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-
 import requests
 from dotenv import load_dotenv
-
 # ── Optional: Google Sheets ──────────────────────────────────────────────────
 try:
     import gspread
@@ -55,14 +17,11 @@ try:
     SHEETS_AVAILABLE = True
 except ImportError:
     SHEETS_AVAILABLE = False
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  LOGGING
+# LOGGING
 # ══════════════════════════════════════════════════════════════════════════════
-
 # مسیر فایل‌ها نسبت به محل اسکریپت (برای جلوگیری از باگ در CI)
 SCRIPT_DIR = Path(__file__).parent
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -72,93 +31,74 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger(__name__)
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  CONFIG
+# CONFIG
 # ══════════════════════════════════════════════════════════════════════════════
-
 load_dotenv()
-
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN not set")
 if not TELEGRAM_CHAT_ID:
     raise ValueError("TELEGRAM_CHAT_ID not set")
-
-RAPIDAPI_KEY       = os.environ.get("RAPIDAPI_KEY", "")
+RAPIDAPI_KEY = os.environ.get("RAPIDAPI_KEY", "")
 GSHEET_CREDENTIALS = os.environ.get("GSHEET_CREDENTIALS", "")
-GSHEET_ID          = os.environ.get("GSHEET_ID", "")
-GSHEET_SHEET_NAME  = "Jobs"
-
-CF_WORKER_URL    = os.environ.get("CF_WORKER_URL", "")
-
+GSHEET_ID = os.environ.get("GSHEET_ID", "")
+GSHEET_SHEET_NAME = "Jobs"
+CF_WORKER_URL = os.environ.get("CF_WORKER_URL", "")
 # ── AI Config (اختیاری) ─────────────────────────────────────────────────────
-AI_PROVIDER = os.environ.get("AI_PROVIDER", "").lower()       # gemini | openai | tokenlb | custom
-AI_API_KEY  = os.environ.get("AI_API_KEY", "")
-AI_MODEL    = os.environ.get("AI_MODEL", "gemini-2.0-flash")
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "").lower() # gemini | openai | custom
+AI_API_KEY = os.environ.get("AI_API_KEY", "")
+AI_MODEL = os.environ.get("AI_MODEL", "gemini-2.0-flash")
 AI_BASE_URL = os.environ.get("AI_BASE_URL", "")
-
 # TokenLB: اگه provider برابر tokenlb بود، base_url خودکار ست میشه
 if AI_PROVIDER == "tokenlb":
     AI_BASE_URL = "https://tokenlb.net/v1"
-
 # ── Telegraph (اختیاری — cache token برای جلوگیری از بن شدن) ─────────────────
 TELEGRAPH_TOKEN = os.environ.get("TELEGRAPH_TOKEN", "")
-
 # ── Adzuna (اختیاری) ────────────────────────────────────────────────────────
-ADZUNA_APP_ID  = os.environ.get("ADZUNA_APP_ID", "")
+ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID", "")
 ADZUNA_API_KEY = os.environ.get("ADZUNA_API_KEY", "")
-
 # ── مسیر فایل seen_jobs نسبت به اسکریپت ─────────────────────────────────────
-SEEN_JOBS_FILE   = SCRIPT_DIR / "seen_jobs.txt"
-MAX_SEEN_JOBS    = 3000
+SEEN_JOBS_FILE = SCRIPT_DIR / "seen_jobs.txt"
+MAX_SEEN_JOBS = 3000
 MAX_JOBS_PER_RUN = 20
-MIN_FIT_SCORE    = 35
-MAX_JOB_AGE_DAYS = 7       # ۷ روز — چون لینکدین دیرتر ایندکس می‌کنه
-
-# ── JSearch Queries ──────────────────────────────────────────────────────────
-# نمونه Front-end Developer:
+MIN_FIT_SCORE = 35
+MAX_JOB_AGE_DAYS = 7 # ۷ روز — چون لینکدین دیرتر ایندکس می‌کنه
+# ── JSEARCH Queries ──────────────────────────────────────────────────────────
 JSEARCH_QUERIES = {
-    1: ["Frontend Developer remote", "React Developer remote"],
-    2: ["Vue.js Developer remote", "JavaScript Developer remote"],
-    3: ["UI Developer remote", "Frontend Engineer remote"],
+    1: ["Junior Frontend remote", "Frontend Developer remote", "React Developer remote"],
+    2: ["Next.js Developer remote", "TypeScript Frontend remote"],
+    3: ["Vue.js remote", "Tailwind CSS Developer remote", "Frontend Engineer remote"],
 }
-
 # ── مهارت‌ها (از env یا پیش‌فرض) ─────────────────────────────────────────────
 _DEFAULT_SKILLS = [
-    "python", "wordpress", "technical seo", "on-page seo",
-    "screaming frog", "ahrefs", "semrush", "google analytics",
-    "google search console", "content", "keyword research",
-    "html", "cms", "link building", "schema",
+    "react", "next.js", "typescript", "javascript", "vue", "tailwind", "html", 
+    "css", "frontend", "frontend developer", "responsive", "ui", "ux", 
+    "component", "state management", "redux", "zustand", "framer motion"
 ]
 _user_skills_env = os.environ.get("USER_SKILLS", "")
 MY_SKILLS = [s.strip().lower() for s in _user_skills_env.split(",") if s.strip()] if _user_skills_env else _DEFAULT_SKILLS
-
 # ── رزومه/پروفایل کاربر (اختیاری — AI ازش استفاده می‌کنه) ────────────────────
 USER_RESUME = os.environ.get("USER_RESUME", "")
-
 # ── کلمات ممنوعه ─────────────────────────────────────────────────────────────
 BLACKLIST_KEYWORDS = [
     "us residents only", "must reside in us", "must be located in us",
     "must be based in the us", "must be based in us",
     "must be authorized to work in the us",
-    "senior seo", "head of seo", "director of seo", "vp of",
-    "agency", "full stack", "fullstack",
+    "senior frontend", "lead frontend", "head of frontend", "director",
+    "agency", "full stack", "fullstack", "backend heavy",
     "native english speaker only",
     "10+ years", "8+ years", "7+ years",
 ]
-
 # ── کلمات تقویت‌کننده ────────────────────────────────────────────────────────
 BOOST_KEYWORDS = {
-    "react": 20, "next.js": 18, "typescript": 15,
-    "junior": 18, "entry level": 15, "associate": 12,
-    "frontend": 12, "front-end": 12, "ui developer": 10,
-    "tailwind": 10, "vue": 8, "part-time": 8, "contract": 5,
-    "remote-first": 8, "async": 5, "flexible": 4,
+    "react": 20, "next.js": 18, "typescript": 18, "tailwind": 15,
+    "vue": 14, "junior": 18, "entry level": 15, "associate": 12,
+    "frontend developer": 15, "frontend engineer": 15,
+    "responsive": 8, "ui/ux": 10, "framer motion": 8,
+    "part-time": 8, "contract": 5, "remote-first": 8,
 }
-
 # ── Regex patterns برای Fit Score (word boundary) ────────────────────────────
 _SKILL_PATTERNS = {skill: re.compile(r"\b" + re.escape(skill) + r"\b", re.IGNORECASE)
                    for skill in MY_SKILLS}
@@ -166,16 +106,12 @@ _BOOST_PATTERNS = {kw: re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)
                    for kw in BOOST_KEYWORDS}
 _BLACKLIST_PATTERNS = {kw: re.compile(r"\b" + re.escape(kw.lower()) + r"\b", re.IGNORECASE)
                        for kw in BLACKLIST_KEYWORDS}
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  AI COVER LETTER (اختیاری — Gemini / OpenAI / Custom)
+# AI COVER LETTER (اختیاری — Gemini / OpenAI / Custom)
 # ══════════════════════════════════════════════════════════════════════════════
-
 def ai_available() -> bool:
     """بررسی اینکه AI فعال شده یا نه"""
     return bool(AI_PROVIDER and AI_API_KEY)
-
-
 def generate_cover_letter(job: dict, matched_skills: list) -> str:
     """
     تولید Cover Letter با AI — فقط بر اساس matched_skills.
@@ -184,19 +120,16 @@ def generate_cover_letter(job: dict, matched_skills: list) -> str:
     """
     if not ai_available():
         return ""
-
-    title   = job.get("title", "")
+    title = job.get("title", "")
     company = job.get("company", "")
-    desc    = (job.get("description") or "")[:1500]
-    
+    desc = (job.get("description") or "")[:1500]
+   
     # فقط مهارت‌های تطابق‌یافته رو بده — نه همه MY_SKILLS
     skills_str = ', '.join(matched_skills) if matched_skills else ', '.join(MY_SKILLS[:5])
-
     # اگه کاربر رزومه داده، اضافه کن
     resume_section = ""
     if USER_RESUME:
         resume_section = f"\nApplicant's background: {USER_RESUME[:500]}\n"
-
     prompt = (
         f"Write a professional, concise cover letter for this job:\n\n"
         f"Title: {title}\n"
@@ -213,7 +146,6 @@ def generate_cover_letter(job: dict, matched_skills: list) -> str:
         f"- End with a call to action\n"
         f"- Do NOT use any Markdown formatting like **bold** or *italics*. Use only plain text."
     )
-
     try:
         if AI_PROVIDER == "gemini":
             return _call_gemini(prompt)
@@ -236,10 +168,8 @@ def generate_cover_letter(job: dict, matched_skills: list) -> str:
                 )
                 send_telegram(err_msg)
             except Exception:
-                pass  # حتی اگه ارسال پیام خطا هم فیل شد، ربات crash نکنه
+                pass # حتی اگه ارسال پیام خطا هم فیل شد، ربات crash نکنه
         return ""
-
-
 def _call_gemini(prompt: str) -> str:
     """Google Gemini API"""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{AI_MODEL}:generateContent?key={AI_API_KEY}"
@@ -253,7 +183,6 @@ def _call_gemini(prompt: str) -> str:
     resp = requests.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     data = resp.json()
-
     # استخراج متن از پاسخ Gemini
     candidates = data.get("candidates", [])
     if not candidates:
@@ -262,8 +191,6 @@ def _call_gemini(prompt: str) -> str:
     if not parts:
         return ""
     return parts[0].get("text", "").strip()
-
-
 def _call_openai_compatible(prompt: str) -> str:
     """OpenAI یا هر API سازگار (مثل Together, Groq, etc.)"""
     base_url = AI_BASE_URL or "https://api.openai.com/v1"
@@ -288,11 +215,9 @@ def _call_openai_compatible(prompt: str) -> str:
     if not choices:
         return ""
     return choices[0].get("message", {}).get("content", "").strip()
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  SEEN JOBS CACHE — OrderedDict برای حفظ ترتیب ورود
+# SEEN JOBS CACHE — OrderedDict برای حفظ ترتیب ورود
 # ══════════════════════════════════════════════════════════════════════════════
-
 def load_seen_jobs() -> OrderedDict:
     """
     بارگذاری دیتابیس آگهی‌های دیده‌شده.
@@ -309,8 +234,6 @@ def load_seen_jobs() -> OrderedDict:
     else:
         log.info("No cache — starting fresh")
     return seen
-
-
 def save_seen_jobs(seen: OrderedDict) -> None:
     """
     ذخیره دیتابیس. اگه تعداد از MAX_SEEN_JOBS بیشتر بود،
@@ -322,32 +245,26 @@ def save_seen_jobs(seen: OrderedDict) -> None:
         ids = ids[-MAX_SEEN_JOBS:]
     SEEN_JOBS_FILE.write_text("\n".join(ids), encoding="utf-8")
     log.info(f"Saved {len(ids)} IDs to cache")
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  FIT SCORE — با Regex word boundary (جلوگیری از false positive)
+# FIT SCORE — با Regex word boundary (جلوگیری از false positive)
 # ══════════════════════════════════════════════════════════════════════════════
-
 def calculate_fit_score(job: dict) -> tuple:
     """برمی‌گردونه: (score: int 0-100, matched_skills: list[str])"""
     score = 0
     matched_skills = []
-
-    title    = (job.get("title") or "").lower()
-    desc     = (job.get("description") or "").lower()
+    title = (job.get("title") or "").lower()
+    desc = (job.get("description") or "").lower()
     combined = f"{title} {desc}"
-
     # Boost keywords — با word boundary
     for kw, pts in BOOST_KEYWORDS.items():
         if _BOOST_PATTERNS[kw].search(combined):
             score += pts
-
     # Skills — با word boundary (جلوگیری از seo in baseon)
     for skill in MY_SKILLS:
         if _SKILL_PATTERNS[skill].search(combined):
             matched_skills.append(skill)
             score += 7
-
-    if re.search(r"\bseo\b", title):
+    if re.search(r"\bfrontend\b", title) or re.search(r"\breact\b", title):
         score += 12
     if job.get("salary"):
         score += 10
@@ -355,19 +272,17 @@ def calculate_fit_score(job: dict) -> tuple:
         score += 8
     if any(re.search(r"\b" + w + r"\b", title) for w in ["junior", "associate", "entry", "jr"]):
         score += 10
-
     return min(score, 100), matched_skills[:4]
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  FREE SOURCES
+# FREE SOURCES
 # ══════════════════════════════════════════════════════════════════════════════
-
 def fetch_remotive() -> list:
     """Remotive.com — رایگان، بدون API key"""
     endpoints = [
-        "https://remotive.com/api/remote-jobs?category=seo&limit=20",
-        "https://remotive.com/api/remote-jobs?search=technical+seo&limit=10",
-        "https://remotive.com/api/remote-jobs?search=seo+content&limit=10",
+        "https://remotive.com/api/remote-jobs?category=software-dev&limit=20",
+        "https://remotive.com/api/remote-jobs?search=frontend&limit=15",
+        "https://remotive.com/api/remote-jobs?search=react&limit=10",
+        "https://remotive.com/api/remote-jobs?search=next.js&limit=10",
     ]
     results = []
     for url in endpoints:
@@ -376,31 +291,29 @@ def fetch_remotive() -> list:
             resp.raise_for_status()
             for j in resp.json().get("jobs", []):
                 results.append({
-                    "id":           f"remotive_{j.get('id', '')}",
-                    "title":        j.get("title", ""),
-                    "company":      j.get("company_name", ""),
-                    "description":  j.get("description", ""),
-                    "salary":       j.get("salary", ""),
-                    "remote":       True,
-                    "url":          j.get("url", ""),
-                    "source":       "Remotive",
+                    "id": f"remotive_{j.get('id', '')}",
+                    "title": j.get("title", ""),
+                    "company": j.get("company_name", ""),
+                    "description": j.get("description", ""),
+                    "salary": j.get("salary", ""),
+                    "remote": True,
+                    "url": j.get("url", ""),
+                    "source": "Remotive",
                     "source_emoji": "🌐",
-                    "posted_at":    (j.get("publication_date") or "")[:10],
-                    "location":     "Remote",
+                    "posted_at": (j.get("publication_date") or "")[:10],
+                    "location": "Remote",
                 })
         except Exception as e:
             log.error(f"Remotive error: {e}")
         time.sleep(1)
     log.info(f"Remotive -> {len(results)} jobs")
     return results
-
-
 def fetch_jobicy() -> list:
     """Jobicy.com — رایگان، بدون API key"""
     endpoints = [
-        "https://jobicy.com/api/v2/remote-jobs?tag=seo&count=20",
-        "https://jobicy.com/api/v2/remote-jobs?tag=content-marketing&count=15",
-        "https://jobicy.com/api/v2/remote-jobs?tag=wordpress&count=10",
+        "https://jobicy.com/api/v2/remote-jobs?tag=frontend&count=20",
+        "https://jobicy.com/api/v2/remote-jobs?tag=react&count=15",
+        "https://jobicy.com/api/v2/remote-jobs?tag=javascript&count=10",
     ]
     results = []
     for url in endpoints:
@@ -417,29 +330,26 @@ def fetch_jobicy() -> list:
                 elif lo:
                     sal = f"{cur} {int(lo):,}+/yr"
                 results.append({
-                    "id":           f"jobicy_{j.get('id', '')}",
-                    "title":        j.get("jobTitle", ""),
-                    "company":      j.get("companyName", ""),
-                    "description":  j.get("jobDescription", ""),
-                    "salary":       sal,
-                    "remote":       True,
-                    "url":          j.get("url", ""),
-                    "source":       "Jobicy",
+                    "id": f"jobicy_{j.get('id', '')}",
+                    "title": j.get("jobTitle", ""),
+                    "company": j.get("companyName", ""),
+                    "description": j.get("jobDescription", ""),
+                    "salary": sal,
+                    "remote": True,
+                    "url": j.get("url", ""),
+                    "source": "Jobicy",
                     "source_emoji": "🟢",
-                    "posted_at":    (j.get("pubDate") or "")[:10],
-                    "location":     "Remote",
+                    "posted_at": (j.get("pubDate") or "")[:10],
+                    "location": "Remote",
                 })
         except Exception as e:
             log.error(f"Jobicy error: {e}")
         time.sleep(1)
     log.info(f"Jobicy -> {len(results)} jobs")
     return results
-
-
 def fetch_arbeitnow() -> list:
     """Arbeitnow — رایگان، بدون API key"""
-    SEO_TERMS = ["seo", "search engine optimization", "content editor",
-                 "technical seo", "wordpress seo"]
+    FRONTEND_TERMS = ["frontend", "react", "next.js", "vue", "typescript", "javascript"]
     try:
         resp = requests.get(
             "https://arbeitnow.com/api/job-board-api",
@@ -453,36 +363,32 @@ def fetch_arbeitnow() -> list:
                 continue
             title = (j.get("title") or "").lower()
             desc = (j.get("description") or "").lower()[:300]
-            if not any(t in title or t in desc for t in SEO_TERMS):
+            if not any(t in title or t in desc for t in FRONTEND_TERMS):
                 continue
             results.append({
-                "id":           f"arbeitnow_{j.get('slug', '')}",
-                "title":        j.get("title", ""),
-                "company":      j.get("company_name", ""),
-                "description":  j.get("description", ""),
-                "salary":       "",
-                "remote":       True,
-                "url":          j.get("url", ""),
-                "source":       "Arbeitnow",
+                "id": f"arbeitnow_{j.get('slug', '')}",
+                "title": j.get("title", ""),
+                "company": j.get("company_name", ""),
+                "description": j.get("description", ""),
+                "salary": "",
+                "remote": True,
+                "url": j.get("url", ""),
+                "source": "Arbeitnow",
                 "source_emoji": "🔷",
-                "posted_at":    datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                "location":     "Remote",
+                "posted_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "location": "Remote",
             })
         log.info(f"Arbeitnow -> {len(results)} jobs")
         return results
     except Exception as e:
         log.error(f"Arbeitnow error: {e}")
         return []
-
-
 def fetch_adzuna() -> list:
     """Adzuna — رایگان با API key (اختیاری)"""
     if not ADZUNA_APP_ID or not ADZUNA_API_KEY:
         return []
-
-    queries = ["seo", "technical seo", "seo specialist"]
+    queries = ["frontend developer", "react developer", "next.js"]
     results = []
-
     for q in queries:
         try:
             resp = requests.get(
@@ -501,38 +407,34 @@ def fetch_adzuna() -> list:
             resp.raise_for_status()
             for j in resp.json().get("results", []):
                 results.append({
-                    "id":           f"adzuna_{j.get('id', '')}",
-                    "title":        j.get("title", ""),
-                    "company":      (j.get("company") or {}).get("display_name", ""),
-                    "description":  j.get("description", ""),
-                    "salary":       f"${int(float(j['salary_min'])):,}-${int(float(j.get('salary_max') or j.get('salary_min'))):,}/yr" if j.get("salary_min") else "",
-                    "remote":       True,
-                    "url":          j.get("redirect_url", ""),
-                    "source":       "Adzuna",
+                    "id": f"adzuna_{j.get('id', '')}",
+                    "title": j.get("title", ""),
+                    "company": (j.get("company") or {}).get("display_name", ""),
+                    "description": j.get("description", ""),
+                    "salary": f"${int(float(j['salary_min'])):,}-${int(float(j.get('salary_max') or j.get('salary_min'))):,}/yr" if j.get("salary_min") else "",
+                    "remote": True,
+                    "url": j.get("redirect_url", ""),
+                    "source": "Adzuna",
                     "source_emoji": "🟡",
-                    "posted_at":    (j.get("created") or "")[:10],
-                    "location":     j.get("location", {}).get("display_name", "Remote"),
+                    "posted_at": (j.get("created") or "")[:10],
+                    "location": j.get("location", {}).get("display_name", "Remote"),
                 })
         except Exception as e:
             log.error(f"Adzuna error ({q}): {e}")
         time.sleep(1)
-
     log.info(f"Adzuna -> {len(results)} jobs")
     return results
-
-
 def fetch_findwork() -> list:
     """
     FindWork.dev — رایگان (۱۰۰ req/روز)، بدون API key.
     مخصوص شغل‌های تکنولوژی و remote.
     """
-    SEO_TERMS = ["seo", "search engine", "content editor", "wordpress",
-                 "technical seo", "organic", "keyword"]
+    FRONTEND_TERMS = ["frontend", "react", "next.js", "vue", "typescript"]
     try:
         resp = requests.get(
             "https://findwork.dev/api/jobs/",
-            params={"search": "seo", "remote": "true", "order_by": "-date_posted"},
-            headers={"User-Agent": "Mozilla/5.0 (compatible; SEOJobBot/4.1)"},
+            params={"search": "frontend", "remote": "true", "order_by": "-date_posted"},
+            headers={"User-Agent": "Mozilla/5.0 (compatible; FrontendJobBot/4.1)"},
             timeout=15,
         )
         if resp.status_code == 403:
@@ -543,46 +445,39 @@ def fetch_findwork() -> list:
         for j in resp.json().get("results", []):
             title = (j.get("role") or "").lower()
             desc = (j.get("text") or "").lower()[:500]
-            # فیلتر بر اساس SEO terms
-            if not any(t in title or t in desc for t in SEO_TERMS):
+            # فیلتر بر اساس FRONTEND terms
+            if not any(t in title or t in desc for t in FRONTEND_TERMS):
                 continue
             results.append({
-                "id":           f"findwork_{j.get('id', '')}",
-                "title":        j.get("role", ""),
-                "company":      j.get("company_name", ""),
-                "description":  j.get("text", ""),
-                "salary":       "",
-                "remote":       j.get("remote", True),
-                "url":          j.get("url", ""),
-                "source":       "FindWork",
+                "id": f"findwork_{j.get('id', '')}",
+                "title": j.get("role", ""),
+                "company": j.get("company_name", ""),
+                "description": j.get("text", ""),
+                "salary": "",
+                "remote": j.get("remote", True),
+                "url": j.get("url", ""),
+                "source": "FindWork",
                 "source_emoji": "🟣",
-                "posted_at":    (j.get("date_posted") or "")[:10],
-                "location":     j.get("location") or "Remote",
+                "posted_at": (j.get("date_posted") or "")[:10],
+                "location": j.get("location") or "Remote",
             })
         log.info(f"FindWork -> {len(results)} jobs")
         return results
     except Exception as e:
         log.error(f"FindWork error: {e}")
         return []
-
-
 def _normalize_cf_worker_url(url: str) -> str:
     """اطمینان از اینکه URL ورکر به /jobs ختم بشه"""
     url = url.rstrip("/")
     if not url.endswith("/jobs"):
         url += "/jobs"
     return url
-
-
 def fetch_cloudflare_worker() -> list:
     """Cloudflare Worker — Remote OK + We Work Remotely"""
     if not CF_WORKER_URL:
         return []
-
     worker_url = _normalize_cf_worker_url(CF_WORKER_URL)
-
-    headers = {"User-Agent": "SEOJobBot/4.1"}
-
+    headers = {"User-Agent": "FrontendJobBot/4.1"}
     try:
         resp = requests.get(worker_url, headers=headers, timeout=20)
         if resp.status_code in (401, 404):
@@ -592,43 +487,37 @@ def fetch_cloudflare_worker() -> list:
         data = resp.json()
         if data.get("status") != "ok":
             return []
-
         jobs = []
         for j in data.get("jobs", []):
             if not j.get("id") or not j.get("title"):
                 continue
             jobs.append({
-                "id":           str(j.get("id", "")),
-                "title":        j.get("title", ""),
-                "company":      j.get("company", ""),
-                "description":  j.get("description", ""),
-                "salary":       j.get("salary", ""),
-                "remote":       j.get("remote", True),
-                "url":          j.get("url", ""),
-                "source":       j.get("source", "CF Worker"),
+                "id": str(j.get("id", "")),
+                "title": j.get("title", ""),
+                "company": j.get("company", ""),
+                "description": j.get("description", ""),
+                "salary": j.get("salary", ""),
+                "remote": j.get("remote", True),
+                "url": j.get("url", ""),
+                "source": j.get("source", "CF Worker"),
                 "source_emoji": j.get("source_emoji", "☁️"),
-                "posted_at":    (j.get("posted_at") or "")[:10],
-                "location":     j.get("location", "Remote"),
+                "posted_at": (j.get("posted_at") or "")[:10],
+                "location": j.get("location", "Remote"),
             })
         log.info(f"CF Worker -> {len(jobs)} jobs")
         return jobs
     except Exception as e:
         log.error(f"CF Worker error: {e}")
         return []
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  JSEARCH API (اختیاری) — با محدودیت P3 روزهای زوج
+# JSEARCH API (اختیاری) — با محدودیت P3 روزهای زوج
 # ══════════════════════════════════════════════════════════════════════════════
-
 def _should_run_p3() -> bool:
     """P3 queries فقط روزهای زوج اجرا میشن (صرفه‌جویی در سقف رایگان)"""
     return datetime.now(timezone.utc).day % 2 == 0
-
-
 def search_jsearch(query: str) -> list:
     if not RAPIDAPI_KEY:
         return []
-
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
         "x-rapidapi-key": RAPIDAPI_KEY,
@@ -637,10 +526,9 @@ def search_jsearch(query: str) -> list:
     params = {
         "query": query,
         "num_pages": "1",
-        "date_posted": "week",       # ۷ روز — لینکدین دیرتر ایندکس می‌کنه
+        "date_posted": "week", # ۷ روز — لینکدین دیرتر ایندکس می‌کنه
         "work_from_home": "true",
     }
-
     for attempt in range(1, 4):
         try:
             resp = requests.get(url, headers=headers, params=params, timeout=20)
@@ -664,8 +552,6 @@ def search_jsearch(query: str) -> list:
         if attempt < 3:
             time.sleep(5 * attempt)
     return []
-
-
 def _normalize_jsearch(j: dict) -> dict:
     salary = ""
     if j.get("job_salary_string"):
@@ -676,41 +562,35 @@ def _normalize_jsearch(j: dict) -> dict:
         per = {"year": "/yr", "month": "/mo", "hour": "/hr"}.get(
               (j.get("job_salary_period") or "").lower(), "")
         salary = f"${lo:,}-${hi:,}{per}" if lo != hi else f"${lo:,}+{per}"
-
     city = j.get("job_city") or ""
     country = j.get("job_country") or ""
     # ساخت location — filter برای حذف بخش‌های خالی
     loc_parts = [p for p in (city, country) if p]
     loc = ", ".join(loc_parts) or "Remote"
-
     return {
-        "id":           j.get("job_id", ""),
-        "title":        j.get("job_title", ""),
-        "company":      j.get("employer_name", ""),
-        "description":  j.get("job_description", ""),
-        "salary":       salary,
-        "remote":       True,
-        "url":          j.get("job_apply_link") or j.get("job_google_link") or "",
-        "source":       j.get("job_publisher", "JSearch"),
+        "id": j.get("job_id", ""),
+        "title": j.get("job_title", ""),
+        "company": j.get("employer_name", ""),
+        "description": j.get("job_description", ""),
+        "salary": salary,
+        "remote": True,
+        "url": j.get("job_apply_link") or j.get("job_google_link") or "",
+        "source": j.get("job_publisher", "JSearch"),
         "source_emoji": "🔍",
-        "posted_at":    (j.get("job_posted_at_datetime_utc") or "")[:10],
-        "location":     loc,
+        "posted_at": (j.get("job_posted_at_datetime_utc") or "")[:10],
+        "location": loc,
     }
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  FILTERS
+# FILTERS
 # ══════════════════════════════════════════════════════════════════════════════
-
 def is_blacklisted(job: dict) -> tuple:
     title = (job.get("title") or "").lower()
-    desc  = (job.get("description") or "").lower()[:2000]
-    text  = f"{title} {desc}"
+    desc = (job.get("description") or "").lower()[:2000]
+    text = f"{title} {desc}"
     for kw, pattern in _BLACKLIST_PATTERNS.items():
         if pattern.search(text):
             return True, kw
     return False, ""
-
-
 def is_too_old(job: dict) -> bool:
     posted = (job.get("posted_at") or "")[:10]
     if not posted:
@@ -720,26 +600,21 @@ def is_too_old(job: dict) -> bool:
         return (datetime.now(timezone.utc) - dt).days > MAX_JOB_AGE_DAYS
     except Exception:
         return False
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  TELEGRAM — با link_preview_options جدید
+# TELEGRAM — با link_preview_options جدید
 # ══════════════════════════════════════════════════════════════════════════════
-
 def _score_bar(score: int) -> str:
     filled = round(score / 10)
     return "█" * filled + "░" * (10 - filled)
-
-
 def format_job(job: dict, score: int, skills: list) -> str:
-    title   = html.escape(job.get("title") or "No Title")
+    title = html.escape(job.get("title") or "No Title")
     company = html.escape(job.get("company") or "Unknown")
-    salary  = job.get("salary") or ""
-    url     = job.get("url") or ""
-    source  = html.escape(job.get("source") or "")
-    semoji  = job.get("source_emoji", "🌐")
-    posted  = job.get("posted_at") or ""
-    loc     = html.escape(job.get("location") or "Remote")
-
+    salary = job.get("salary") or ""
+    url = job.get("url") or ""
+    source = html.escape(job.get("source") or "")
+    semoji = job.get("source_emoji", "🌐")
+    posted = job.get("posted_at") or ""
+    loc = html.escape(job.get("location") or "Remote")
     lines = [
         f"💼 <b>{title}</b>",
         f"🏢 {company}",
@@ -755,10 +630,7 @@ def format_job(job: dict, score: int, skills: list) -> str:
         lines.append(f"📅 {posted}")
     if url:
         lines.append(f'🔗 <a href="{html.escape(url)}">Apply Now</a>')
-
     return "\n".join(lines)
-
-
 def send_telegram(text: str, reply_markup: dict = None, _retries: int = 3) -> bool:
     """
     ارسال پیام به تلگرام — با link_preview_options جدید.
@@ -773,13 +645,11 @@ def send_telegram(text: str, reply_markup: dict = None, _retries: int = 3) -> bo
     }
     if reply_markup:
         payload["reply_markup"] = reply_markup
-
     for attempt in range(1, _retries + 1):
         try:
             resp = requests.post(api_url, json=payload, timeout=15)
             if resp.ok:
                 return True
-
             # Flood Wait handling — تلگرام retry_after رو برمی‌گردونه
             if resp.status_code == 429:
                 try:
@@ -789,7 +659,6 @@ def send_telegram(text: str, reply_markup: dict = None, _retries: int = 3) -> bo
                 log.warning(f"Telegram Flood Wait — sleeping {retry_after}s (attempt {attempt}/{_retries})")
                 time.sleep(retry_after + 1)
                 continue
-
             log.error(f"Telegram {resp.status_code}: {resp.text[:200]}")
             return False
         except requests.exceptions.Timeout:
@@ -800,15 +669,10 @@ def send_telegram(text: str, reply_markup: dict = None, _retries: int = 3) -> bo
             log.error(f"Telegram error: {e}")
             return False
     return False
-
-
 # Telegraph token cache — یکبار ساخته میشه و بقیه استفاده می‌کنن
 _telegraph_token_cache = {"token": TELEGRAPH_TOKEN}
-
 # AI error notification flag — فقط یکبار در هر اجرا پیام خطا ارسال میشه
 _ai_error_notified = {"sent": False}
-
-
 def _get_telegraph_token() -> str:
     """
     گرفتن Telegraph access_token:
@@ -817,11 +681,10 @@ def _get_telegraph_token() -> str:
     """
     if _telegraph_token_cache["token"]:
         return _telegraph_token_cache["token"]
-
     try:
         acc_resp = requests.post(
             "https://api.telegra.ph/createAccount",
-            json={"short_name": "SEOJobBot", "author_name": "SEO Job Bot"},
+            json={"short_name": "FrontendJobBot", "author_name": "Frontend Job Bot"},
             timeout=10,
         )
         acc_data = acc_resp.json()
@@ -833,8 +696,6 @@ def _get_telegraph_token() -> str:
     except Exception as e:
         log.error(f"Telegraph createAccount error: {e}")
     return ""
-
-
 def publish_to_telegraph(title: str, content: str) -> str:
     """
     پابلیش متن روی Telegra.ph.
@@ -844,7 +705,6 @@ def publish_to_telegraph(title: str, content: str) -> str:
     access_token = _get_telegraph_token()
     if not access_token:
         return ""
-
     try:
         # ساخت محتوای HTML ساده برای Telegraph
         paragraphs = content.split("\n\n")
@@ -854,7 +714,6 @@ def publish_to_telegraph(title: str, content: str) -> str:
             for line in lines:
                 if line.strip():
                     nodes.append({"tag": "p", "children": [line.strip()]})
-
         # پابلیش صفحه
         page_resp = requests.post(
             "https://api.telegra.ph/createPage",
@@ -862,7 +721,7 @@ def publish_to_telegraph(title: str, content: str) -> str:
                 "access_token": access_token,
                 "title": title[:256],
                 "content": nodes or [{"tag": "p", "children": ["No content"]}],
-                "author_name": "SEO Job Bot",
+                "author_name": "Frontend Job Bot",
             },
             timeout=10,
         )
@@ -873,8 +732,6 @@ def publish_to_telegraph(title: str, content: str) -> str:
     except Exception as e:
         log.error(f"Telegraph publish error: {e}")
         return ""
-
-
 def build_job_buttons(job: dict, cover_letter_url: str = "") -> dict:
     """
     ساخت دکمه‌های زیر هر آگهی.
@@ -885,16 +742,12 @@ def build_job_buttons(job: dict, cover_letter_url: str = "") -> dict:
     if not url:
         return {}
     rows = [[{"text": "📝 Apply", "url": url}]]
-
     if cover_letter_url:
         rows.append([{"text": "✍️ Cover Letter", "url": cover_letter_url}])
-
     return {"inline_keyboard": rows}
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  GOOGLE SHEETS (اختیاری) — Batch Append
+# GOOGLE SHEETS (اختیاری) — Batch Append
 # ══════════════════════════════════════════════════════════════════════════════
-
 def get_sheets_client():
     if not SHEETS_AVAILABLE or not GSHEET_CREDENTIALS or not GSHEET_ID:
         return None
@@ -911,8 +764,6 @@ def get_sheets_client():
     except Exception as e:
         log.error(f"Sheets auth error: {e}")
         return None
-
-
 def ensure_sheet_headers(client) -> None:
     if not client:
         return
@@ -927,8 +778,6 @@ def ensure_sheet_headers(client) -> None:
             )
     except Exception as e:
         log.error(f"Sheet header error: {e}")
-
-
 def batch_append_to_sheet(client, rows: list) -> None:
     """
     ارسال دسته‌ای (Batch) ردیف‌ها به Google Sheets.
@@ -945,22 +794,17 @@ def batch_append_to_sheet(client, rows: list) -> None:
         log.info(f"Batch appended {len(rows)} rows to Google Sheets")
     except Exception as e:
         log.error(f"Sheet batch append error: {e}")
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN
+# MAIN
 # ══════════════════════════════════════════════════════════════════════════════
-
 def main() -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    log.info(f"=== SEO Job Scraper v4.1 started at {now} ===")
-
+    log.info(f"=== Frontend Job Scraper v4.1 started at {now} ===")
     seen_jobs = load_seen_jobs()
     sheets = get_sheets_client()
     ensure_sheet_headers(sheets)
-
     raw_jobs = []
     source_counts = {}
-
     # ── منابع رایگان ─────────────────────────────────────────────────────────
     free_sources = [
         (fetch_remotive, "Remotive"),
@@ -970,7 +814,6 @@ def main() -> None:
         (fetch_findwork, "FindWork"),
         (fetch_cloudflare_worker, "CF Worker"),
     ]
-
     for fn, name in free_sources:
         try:
             jobs = fn()
@@ -979,7 +822,6 @@ def main() -> None:
         except Exception as e:
             log.error(f"{name} failed: {e}\n{traceback.format_exc()}")
             source_counts[name] = 0
-
     # ── JSearch (اختیاری) — P3 فقط روزهای زوج ────────────────────────────────
     jsearch_total = 0
     for priority in sorted(JSEARCH_QUERIES.keys()):
@@ -996,18 +838,15 @@ def main() -> None:
                 log.error(f"JSearch '{query}': {e}")
             time.sleep(1.5)
     source_counts["JSearch"] = jsearch_total
-
     # ── فیلتر + امتیازدهی ────────────────────────────────────────────────────
     seen_ids = set()
     title_keys = set()
     stats = {"blacklisted": 0, "seen": 0, "old": 0, "low_score": 0}
     qualified = []
-
     for job in raw_jobs:
         try:
             jid = job.get("id") or job.get("url") or ""
             title_key = f"{(job.get('title') or '').lower().strip()}|{(job.get('company') or '').lower().strip()}"
-
             if not jid:
                 continue
             if jid in seen_jobs or jid in seen_ids:
@@ -1018,40 +857,31 @@ def main() -> None:
                 seen_ids.add(jid)
                 seen_jobs[jid] = True
                 continue
-
             seen_ids.add(jid)
             seen_jobs[jid] = True
             title_keys.add(title_key)
-
             bl, matched = is_blacklisted(job)
             if bl:
                 stats["blacklisted"] += 1
                 continue
-
             if is_too_old(job):
                 stats["old"] += 1
                 continue
-
             score, skills = calculate_fit_score(job)
             if score < MIN_FIT_SCORE:
                 stats["low_score"] += 1
                 continue
-
             qualified.append((job, score, skills))
         except Exception as e:
             log.error(f"Processing error: {e}")
-
     qualified.sort(key=lambda x: x[1], reverse=True)
-
     log.info(
         f"Qualified: {len(qualified)} | BL: {stats['blacklisted']} | "
         f"Seen: {stats['seen']} | Old: {stats['old']} | Low: {stats['low_score']}"
     )
-
     # ── ارسال به تلگرام ──────────────────────────────────────────────────────
     active_sources = {k: v for k, v in source_counts.items() if v > 0}
     sources_line = " | ".join(f"{k}: {v}" for k, v in active_sources.items())
-
     if not qualified:
         send_telegram(
             f"🔍 <b>Daily Report</b>\n📅 {now}\n\n"
@@ -1064,11 +894,10 @@ def main() -> None:
         )
         save_seen_jobs(seen_jobs)
         return
-
     # Header message
     ai_status = "🧠 AI: ON" if ai_available() else "🧠 AI: OFF"
     send_telegram(
-        f"🤖 <b>New SEO Jobs</b>\n"
+        f"🤖 <b>New Frontend Jobs</b>\n"
         f"📅 {now}\n\n"
         f"✅ <b>{len(qualified)}</b> jobs (sorted by fit)\n"
         f"⛔ {stats['blacklisted']} filtered | "
@@ -1079,12 +908,10 @@ def main() -> None:
         f"➖➖➖➖➖➖➖➖"
     )
     time.sleep(1.5)
-
     sent = 0
     cl_count = 0
-    MAX_COVER_LETTERS = 5  # محدود کردن CL به top 5 برای صرفه‌جویی در API
-    sheet_rows = []  # جمع‌آوری ردیف‌ها برای Batch ارسال به Sheets
-
+    MAX_COVER_LETTERS = 5 # محدود کردن CL به top 5 برای صرفه‌جویی در API
+    sheet_rows = [] # جمع‌آوری ردیف‌ها برای Batch ارسال به Sheets
     for job, score, skills in qualified[:MAX_JOBS_PER_RUN]:
         try:
             # تولید Cover Letter با AI (اگه فعال باشه) + پابلیش روی Telegraph
@@ -1093,22 +920,19 @@ def main() -> None:
             if ai_available() and TELEGRAPH_TOKEN and cl_count < MAX_COVER_LETTERS:
                 cl_text = generate_cover_letter(job, skills)
                 if cl_text:
-                    time.sleep(1)  # delay قبل از Telegraph برای جلوگیری از بن
+                    time.sleep(1) # delay قبل از Telegraph برای جلوگیری از بن
                     cl_title = f"Cover Letter — {job.get('title', '')[:60]}"
                     cl_url = publish_to_telegraph(cl_title, cl_text)
                     if cl_url:
                         cl_count += 1
                     else:
                         log.warning(f"Telegraph publish failed for: {job.get('title', '')[:40]}")
-
             # ساخت inline buttons (با یا بدون لینک Cover Letter)
             buttons = build_job_buttons(job, cover_letter_url=cl_url)
-
             # ارسال آگهی
             msg = format_job(job, score, skills)
             if send_telegram(msg, reply_markup=buttons if buttons else None):
                 sent += 1
-
                 # جمع‌آوری ردیف برای Batch append به Sheets
                 sheet_rows.append([
                     job.get("title", ""), job.get("company", ""),
@@ -1116,19 +940,14 @@ def main() -> None:
                     job.get("posted_at", ""), job.get("salary", ""),
                     score, job.get("location", ""),
                     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-                    "New", cl_url,  # لینک Cover Letter (Telegraph)
+                    "New", cl_url, # لینک Cover Letter (Telegraph)
                 ])
-
-            time.sleep(1.5)  # جلوگیری از Flood Wait تلگرام
+            time.sleep(1.5) # جلوگیری از Flood Wait تلگرام
         except Exception as e:
             log.error(f"Send error: {e}")
-
     # ── Batch ارسال به Google Sheets (خارج از حلقه) ───────────────────────────
     batch_append_to_sheet(sheets, sheet_rows)
-
     save_seen_jobs(seen_jobs)
     log.info(f"=== Done. Sent {sent}/{len(qualified)} ===")
-
-
 if __name__ == "__main__":
     main()
