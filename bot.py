@@ -119,10 +119,11 @@ MIN_FIT_SCORE    = 35
 MAX_JOB_AGE_DAYS = 7       # ۷ روز — چون لینکدین دیرتر ایندکس می‌کنه
 
 # ── JSearch Queries ──────────────────────────────────────────────────────────
+# نمونه Front-end Developer:
 JSEARCH_QUERIES = {
-    1: ["Junior SEO remote", "Technical SEO remote", "SEO Python remote"],
-    2: ["SEO Content Editor remote", "WordPress SEO Specialist remote"],
-    3: ["on-page SEO specialist remote", "SEO copywriter remote"],
+    1: ["Frontend Developer remote", "React Developer remote"],
+    2: ["Vue.js Developer remote", "JavaScript Developer remote"],
+    3: ["UI Developer remote", "Frontend Engineer remote"],
 }
 
 # ── مهارت‌ها (از env یا پیش‌فرض) ─────────────────────────────────────────────
