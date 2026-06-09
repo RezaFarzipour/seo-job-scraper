@@ -152,10 +152,10 @@ BLACKLIST_KEYWORDS = [
 
 # ── کلمات تقویت‌کننده ────────────────────────────────────────────────────────
 BOOST_KEYWORDS = {
-    "technical seo": 20, "python": 18, "wordpress": 15,
+    "react": 20, "next.js": 18, "typescript": 15,
     "junior": 18, "entry level": 15, "associate": 12,
-    "seo specialist": 12, "seo editor": 12, "content editor": 10,
-    "on-page": 10, "part-time": 8, "contract": 5,
+    "frontend": 12, "front-end": 12, "ui developer": 10,
+    "tailwind": 10, "vue": 8, "part-time": 8, "contract": 5,
     "remote-first": 8, "async": 5, "flexible": 4,
 }
 
