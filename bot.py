@@ -63,7 +63,7 @@ ADZUNA_API_KEY = os.environ.get("ADZUNA_API_KEY", "")
 SEEN_JOBS_FILE = SCRIPT_DIR / "seen_jobs.txt"
 MAX_SEEN_JOBS = 3000
 MAX_JOBS_PER_RUN = 20
-MIN_FIT_SCORE = 35
+MIN_FIT_SCORE = 0
 MAX_JOB_AGE_DAYS = 7 # ۷ روز — چون لینکدین دیرتر ایندکس می‌کنه
 # ── JSEARCH Queries ──────────────────────────────────────────────────────────
 JSEARCH_QUERIES = {
